@@ -16,7 +16,7 @@
 using namespace std;
 
 void getArgs(char* argv[], int& num_tosses);
-void findPrimesUpToN(int n, int* primes);
+void findPrimesInInterval(int start, int interval_size, int* primes);
 void findTerms(int n, int* primes, int& term_a, int& term_b, int& term_c);
 
 int main(int argc, char* argv[]) {
@@ -37,19 +37,40 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
-    // find all primes up to n
-    int* primes = new int[n];
-    if (rank == 0) 
-        findPrimesUpToN(n, primes);
-
     MPI_Barrier(MPI_COMM_WORLD);
     double local_start = MPI_Wtime();
 
-    // broadcast all primes to every process
+    // find all primes up to n
+    int local_interval_size = n/proc_qty;
+    int local_primes_start = rank * local_interval_size;
+    int* local_primes = new int[local_interval_size];
+    findPrimesInInterval(local_primes_start, local_interval_size, local_primes);
+
+    // gather local primes into global primes
+    int* global_primes = NULL;
+    if (rank == 0)
+        global_primes = new int[n];
+    MPI_Gather(local_primes, local_interval_size, MPI_INT, global_primes, local_interval_size, MPI_INT, 0, MPI_COMM_WORLD);
+
+    // merge global primes into array of primes
+    int* primes = new int[n];
+    if (rank == 0) {
+        int currentPrime = 0;
+        for (int i = 0; i < n; ++i) {
+            if (global_primes[i] > 0) {
+                primes[currentPrime] = global_primes[i];
+                currentPrime++;
+            }
+        }
+        for (int i = currentPrime; i < n; ++i) {
+            primes[i] = -1;
+        }
+    }
+
+    // broadcast primes to every process
     MPI_Bcast(primes, n, MPI_INT, 0, MPI_COMM_WORLD);
 
     // find sums for local interval
-    int local_interval_size = n/proc_qty;
     int local_min_n = rank * local_interval_size;
     int local_max_n = (rank+1) * local_interval_size - 1;
     // printf("process %d gets from %d to %d\n", rank, local_min_n+1, local_max_n+1);
@@ -104,11 +125,13 @@ int main(int argc, char* argv[]) {
 
         // clean up
         delete [] global_result;
+        delete [] global_primes;
     }
 
     // clean up
-    delete [] primes;
+    delete [] local_primes;
     delete [] local_interval;
+    delete [] primes;
 
 	MPI_Barrier(MPI_COMM_WORLD); // para sincronizar la finalizaci�n de los procesos
 
@@ -120,13 +143,19 @@ void getArgs(char* argv[], int& n) {
 	n = strtol(argv[1], NULL, 10);
 }
 
-// fill <primes> with all primes up to n
+// fill <primes> with all primes from <start> up to but excluding <finish>
 // fill the rest of <primes> with -1's
-void findPrimesUpToN(int n, int* primes) {
-    primes[0] = 1;
-    int length = 1;
+void findPrimesInInterval(int start, int interval_size, int* primes) {
+    int end = start + interval_size;
+    int length = 0;
 
-    for (int i = 1; i <= n; ++i) {
+    for (int i = start; i < end; ++i) {
+        if (i == 0) {
+            primes[0] = 1;
+            length++;
+            continue;
+        }
+
         int num_factors = 0;
         for (int j = i; j > 0; j--) {
             if (i%j == 0) {
@@ -142,7 +171,7 @@ void findPrimesUpToN(int n, int* primes) {
         }
     }
 
-    for (int i = length; i < n; ++i) {
+    for (int i = length; i < interval_size; ++i) {
         primes[length] = -1;
         length++;
     }
