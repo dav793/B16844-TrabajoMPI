@@ -80,61 +80,41 @@ int main(int argc, char* argv[]) {
     int* local_arr_sorted = new int[local_arr_size];
     mergeSort(local_arr, local_arr_size, local_arr_sorted);
 
-    // print local sorted array
-    // printf("proc %d sorted array:\n\t", rank);
-    // for (int i = 0; i < local_arr_size; ++i) {
-    //     printf("%d ", local_arr_sorted[i]);    
-    // }
-    // printf("\n");
+    int iterations = (int) log2(proc_qty); 
+    for (int i = 0; i < iterations; ++i) {
 
-    // gather local results into global result
-    int* global_arr = NULL;
-    if (rank == 0)
-        global_arr = new int[n];
-    MPI_Gather(local_arr_sorted, local_arr_size, MPI_INT, global_arr, local_arr_size, MPI_INT, 0, MPI_COMM_WORLD);
+        int multiplier = pow( 2, i+1 );
+        int partner_proc;
+        bool is_receiver;
 
-    if (rank == 0) {
+        if (rank % multiplier == 0) {
 
-        // do the final merge sort steps
-        vector<vector<int>> s;
-        s.clear();
-        s.resize(proc_qty);
-        for (int i = 0; i < proc_qty; ++i) {
-            s[i].clear();
-            s[i].resize(local_arr_size);
-            std::copy(global_arr + (local_arr_size * i), global_arr + (local_arr_size * (i+1)), s[i].begin());
-        
-            // printf("proc %d received arr:\n\t", rank);
-            // for (int j = 0; j < local_arr_size; ++j) {
-            //     printf("%d ", s[i][j]);
-            // }
-            // printf("\n");
-        }
+            is_receiver = true;
+            partner_proc = rank + pow( 2, i );
 
-        int sub_arr_size = proc_qty;
-        int sub_arr_compl_size = local_arr_size;
-        while (sub_arr_size > 1) {
+            int partner_arr[local_arr_size];
+            MPI_Recv(partner_arr, local_arr_size, MPI_INT, partner_proc, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE); 
 
-            sub_arr_size = sub_arr_size/2;
-            sub_arr_compl_size = sub_arr_compl_size*2;
+            vector<int> local_vec(local_arr_sorted, local_arr_sorted + local_arr_size);
+            vector<int> partner_vec(partner_arr, partner_arr + local_arr_size);
+            vector<int> merged_vec;
+            mergeSortStep(local_vec, partner_vec, merged_vec);
 
-            vector<vector<int>> s2;
-            s2.clear();
-            s2.resize(sub_arr_size);
-            for (int i = 0; i < sub_arr_size; ++i) {
-                mergeSortStep(s[(i*2)], s[(i*2)+1], s2[i]);
-            }
-
-            s.clear();
-            s.resize(sub_arr_size);
-            copy(s2.begin(), s2.end(), s.begin());
+            delete [] local_arr_sorted;
+            local_arr_sorted = new int[local_arr_size * 2];
+            copy(merged_vec.begin(), merged_vec.end(), local_arr_sorted);
 
         }
+        else if (rank % multiplier == pow( 2, i )) {
 
-        // copy final vector into global array
-        for (int i = 0; i < n; ++i) {
-            global_arr[i] = s[0][i];
-        }
+            is_receiver = false;
+            partner_proc = rank - pow( 2, i );
+
+            MPI_Send(local_arr_sorted, local_arr_size, MPI_INT, partner_proc, 0, MPI_COMM_WORLD);
+
+        }     
+
+        local_arr_size *= 2;
 
     }
 
@@ -147,7 +127,7 @@ int main(int argc, char* argv[]) {
     if (rank == 0) {
         printf("Result:\n");
         for (int i = 0; i < n; ++i) {
-            printf("%d ", global_arr[i]);
+            printf("%d ", local_arr_sorted[i]);
         }
         printf("\n\n");
 
@@ -155,8 +135,9 @@ int main(int argc, char* argv[]) {
     }
 
     // clean up
-    if (rank == 0) 
+    if (rank == 0) {
         delete [] arr;
+    }
     delete [] local_arr;
     delete [] local_arr_sorted;
 
